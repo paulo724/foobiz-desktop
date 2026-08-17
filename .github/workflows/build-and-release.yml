@@ -11,16 +11,15 @@ on:
       version:
         description: 'Versão (ex: v1.4.0)'
         required: true
-      frontend_dist_url:
-        description: 'URL do frontend-dist.zip'
-        required: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: windows-latest
     env:
       VERSION: ${{ github.event.client_payload.version || github.event.inputs.version }}
-      FRONTEND_DIST_URL: ${{ github.event.client_payload.frontend_dist_url || github.event.inputs.frontend_dist_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,8 +32,12 @@ jobs:
 
       - name: Download frontend dist
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.FOOBIZ_READ_TOKEN }}
         run: |
-          curl -L "$FRONTEND_DIST_URL" -o frontend-dist.zip
+          gh release download "$VERSION" \
+            --repo solubiztecnologia/FOOBIZ \
+            --pattern frontend-dist.zip
           mkdir -p frontend
           unzip -o frontend-dist.zip -d frontend
 

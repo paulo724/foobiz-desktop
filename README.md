@@ -29,9 +29,11 @@ O pipeline é acionado ao dar push de uma tag `v*` no repositório **FOOBIZ**:
 1. O workflow `desktop-release.yml` no FOOBIZ builda o frontend e publica
    `frontend-dist.zip` como asset de uma release (pre-release) no próprio FOOBIZ.
 2. Ele então dispara (`repository_dispatch`) o workflow `build-and-release.yml`
-   deste repositório, passando a versão e a URL do zip.
-3. Este repositório baixa o zip, builda os 3 instaladores Windows e publica
-   a release aqui (`paulo724/foobiz-desktop`) via `electron-builder --publish always`.
+   deste repositório, passando a versão.
+3. Este repositório baixa o `frontend-dist.zip` da release do FOOBIZ (via
+   `gh release download`, autenticado — a release é de um repo privado),
+   builda os 3 instaladores Windows e publica a release aqui
+   (`paulo724/foobiz-desktop`) via `electron-builder --publish always`.
 4. O `electron-updater` embutido em cada app (ver `src/updater.js`) consulta
    essas releases automaticamente e instala a atualização.
 
@@ -47,9 +49,13 @@ O pipeline é acionado ao dar push de uma tag `v*` no repositório **FOOBIZ**:
 
 **Neste repositório** (`paulo724/foobiz-desktop` → Settings → Secrets and variables → Actions):
 
-- Nenhum secret adicional é necessário — o workflow usa o `GITHUB_TOKEN`
-  automático do próprio repositório para publicar a release (permissão
-  `contents: write` já é suficiente, concedida por padrão a Actions do repo).
+- `FOOBIZ_READ_TOKEN`: um GitHub Personal Access Token (fine-grained, com
+  permissão `Contents: Read` no repositório `solubiztecnologia/FOOBIZ`, ou um
+  classic PAT com escopo `repo`) usado para baixar o `frontend-dist.zip` da
+  release do FOOBIZ (repo privado — não dá para baixar assets sem autenticação).
+- O `GITHUB_TOKEN` automático do próprio repositório já é suficiente para
+  publicar a release aqui (permissão `contents: write` concedida via
+  `permissions:` no workflow).
 
 ### Disparando uma release
 
