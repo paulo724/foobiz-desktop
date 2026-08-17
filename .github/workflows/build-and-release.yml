@@ -1,0 +1,51 @@
+name: Build and Release
+
+# Acionado pelo repositório FOOBIZ (repository_dispatch) quando uma tag
+# v* é publicada lá. Baixa o frontend/dist já buildado, gera os 3
+# instaladores Windows e publica a release no GitHub.
+on:
+  repository_dispatch:
+    types: [build-desktop]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão (ex: v1.4.0)'
+        required: true
+      frontend_dist_url:
+        description: 'URL do frontend-dist.zip'
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ github.event.client_payload.version || github.event.inputs.version }}
+      FRONTEND_DIST_URL: ${{ github.event.client_payload.frontend_dist_url || github.event.inputs.frontend_dist_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm install
+
+      - name: Download frontend dist
+        shell: bash
+        run: |
+          curl -L "$FRONTEND_DIST_URL" -o frontend-dist.zip
+          mkdir -p frontend
+          unzip -o frontend-dist.zip -d frontend
+
+      - name: Set version
+        shell: bash
+        run: npm version "${VERSION#v}" --no-git-tag-version
+
+      - name: Build and publish (PDV, KDS, Totem)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run build:pdv -- --publish always
+          npm run build:kds -- --publish always
+          npm run build:totem -- --publish always
