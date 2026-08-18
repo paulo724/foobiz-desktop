@@ -45,6 +45,13 @@ jobs:
         shell: bash
         run: npm version "${VERSION#v}" --no-git-tag-version
 
+      - name: Delete existing release/draft for this tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "$VERSION" --repo paulo724/foobiz-desktop --yes --cleanup-tag || true
+
       - name: Build and publish (PDV, KDS, Totem)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
