@@ -49,5 +49,6 @@ module.exports = {
     provider: 'github',
     owner: 'paulo724',
     repo: 'foobiz-desktop',
+    channel: 'kds',
   },
 }
