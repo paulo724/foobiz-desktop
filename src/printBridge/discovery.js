@@ -1,6 +1,7 @@
 const os = require('os')
 const net = require('net')
 const { Bonjour } = require('bonjour-service')
+const { SerialPort } = require('serialport')
 const log = require('electron-log')
 
 const PRINTER_PORT = 9100
@@ -22,6 +23,23 @@ async function discoverUsb() {
     }))
   } catch (err) {
     log.error('printBridge discovery: erro ao listar impressoras USB', err)
+    return []
+  }
+}
+
+async function discoverSerial() {
+  try {
+    const ports = await SerialPort.list()
+    return ports.map((port) => ({
+      type: 'serial',
+      name: port.manufacturer ? `${port.path} (${port.manufacturer})` : port.path,
+      address: null,
+      serialPort: port.path,
+      serialNumber: port.serialNumber ?? null,
+      raw: port,
+    }))
+  } catch (err) {
+    log.error('printBridge discovery: erro ao listar portas seriais', err)
     return []
   }
 }
@@ -126,9 +144,9 @@ async function discoverNetworkScan(alreadyFound = []) {
 }
 
 async function discover() {
-  const [usb, mdns] = await Promise.all([discoverUsb(), discoverMdns()])
+  const [usb, serial, mdns] = await Promise.all([discoverUsb(), discoverSerial(), discoverMdns()])
   const scan = await discoverNetworkScan(mdns)
-  return [...usb, ...mdns, ...scan]
+  return [...usb, ...serial, ...mdns, ...scan]
 }
 
-module.exports = { discover, discoverUsb, discoverMdns, discoverNetworkScan }
+module.exports = { discover, discoverUsb, discoverSerial, discoverMdns, discoverNetworkScan }

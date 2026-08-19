@@ -9,16 +9,32 @@ function baseUrl() {
   return `${apiBaseUrl.replace(/\/+$/, '')}/${tenantCode}`
 }
 
+const REQUEST_TIMEOUT_MS = 8000
+
 async function request(path, { method = 'GET', token, body } = {}) {
-  const res = await fetch(`${baseUrl()}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(token ? { 'X-Station-Token': token } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+  let res
+  try {
+    res = await fetch(`${baseUrl()}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(token ? { 'X-Station-Token': token } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    })
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`printBridge: timeout (${REQUEST_TIMEOUT_MS}ms) em ${path}`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
 
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {

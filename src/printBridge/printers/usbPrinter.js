@@ -1,13 +1,85 @@
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const { spawnSync } = require('child_process')
+const koffi = require('koffi')
 
-function resolvePsScriptPath() {
-  const { app } = require('electron')
-  const packaged = path.join(process.resourcesPath || '', 'winraw.ps1')
-  if (app.isPackaged && fs.existsSync(packaged)) return packaged
-  return path.join(__dirname, '..', '..', '..', 'resources', 'winraw.ps1')
+let winspool = null
+let OpenPrinterA = null
+let ClosePrinter = null
+let StartDocPrinterA = null
+let EndDocPrinter = null
+let StartPagePrinter = null
+let EndPagePrinter = null
+let WritePrinter = null
+let GetLastError = null
+
+function loadWinspool() {
+  if (winspool) return
+
+  winspool = koffi.load('winspool.drv')
+  const kernel32 = koffi.load('kernel32.dll')
+
+  koffi.struct('DOCINFOA', {
+    pDocName: 'str',
+    pOutputFile: 'str',
+    pDataType: 'str',
+  })
+
+  OpenPrinterA = winspool.func('bool __stdcall OpenPrinterA(str pPrinterName, _Out_ void **phPrinter, void *pDefault)')
+  ClosePrinter = winspool.func('bool __stdcall ClosePrinter(void *hPrinter)')
+  StartDocPrinterA = winspool.func('int __stdcall StartDocPrinterA(void *hPrinter, uint32_t level, const DOCINFOA *pDocInfo)')
+  EndDocPrinter = winspool.func('bool __stdcall EndDocPrinter(void *hPrinter)')
+  StartPagePrinter = winspool.func('bool __stdcall StartPagePrinter(void *hPrinter)')
+  EndPagePrinter = winspool.func('bool __stdcall EndPagePrinter(void *hPrinter)')
+  WritePrinter = winspool.func('bool __stdcall WritePrinter(void *hPrinter, void *pBuf, uint32_t cbBuf, _Out_ uint32_t *pcWritten)')
+  GetLastError = kernel32.func('uint32_t __stdcall GetLastError()')
+}
+
+function win32Error() {
+  try {
+    return GetLastError()
+  } catch {
+    return 'desconhecido'
+  }
+}
+
+function sendRawBytesToPrinter(printerName, buffer) {
+  loadWinspool()
+
+  const hPrinterOut = [null]
+  if (!OpenPrinterA(printerName, hPrinterOut, null)) {
+    throw new Error(`OpenPrinter falhou para "${printerName}" (Win32Error=${win32Error()})`)
+  }
+  const hPrinter = hPrinterOut[0]
+
+  try {
+    const jobId = StartDocPrinterA(hPrinter, 1, {
+      pDocName: 'ESC/POS Job',
+      pOutputFile: null,
+      pDataType: 'RAW',
+    })
+    if (jobId <= 0) {
+      throw new Error(`StartDocPrinter falhou (Win32Error=${win32Error()})`)
+    }
+
+    try {
+      if (!StartPagePrinter(hPrinter)) {
+        throw new Error(`StartPagePrinter falhou (Win32Error=${win32Error()})`)
+      }
+
+      try {
+        const writtenOut = [0]
+        const ok = WritePrinter(hPrinter, buffer, buffer.length, writtenOut)
+        const written = writtenOut[0]
+        if (!ok || written !== buffer.length) {
+          throw new Error(`WritePrinter falhou: escreveu ${written}/${buffer.length} bytes (Win32Error=${win32Error()})`)
+        }
+      } finally {
+        EndPagePrinter(hPrinter)
+      }
+    } finally {
+      EndDocPrinter(hPrinter)
+    }
+  } finally {
+    ClosePrinter(hPrinter)
+  }
 }
 
 function build(printerName) {
@@ -17,28 +89,7 @@ function build(printerName) {
         throw new Error('Impressão USB/spooler só é suportada no Windows.')
       }
 
-      const psScript = resolvePsScriptPath()
-      if (!fs.existsSync(psScript)) {
-        throw new Error(`winraw.ps1 não encontrado em ${psScript}`)
-      }
-
-      const tmpFile = path.join(os.tmpdir(), `escpos_${Date.now()}_${Math.random().toString(16).slice(2)}.bin`)
-      fs.writeFileSync(tmpFile, buffer)
-
-      try {
-        const result = spawnSync('powershell.exe', [
-          '-NoProfile', '-ExecutionPolicy', 'Bypass',
-          '-File', psScript,
-          '-PrinterName', printerName,
-          '-FilePath', tmpFile,
-        ], { encoding: 'utf8' })
-
-        if (result.status !== 0) {
-          throw new Error((result.stderr || result.stdout || '').trim() || `RAW print failed (code ${result.status})`)
-        }
-      } finally {
-        try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
-      }
+      sendRawBytesToPrinter(printerName, buffer)
     },
   }
 }

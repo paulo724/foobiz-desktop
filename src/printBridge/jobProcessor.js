@@ -1,6 +1,7 @@
 const log = require('electron-log')
 const apiClient = require('./apiClient')
 const usbPrinter = require('./printers/usbPrinter')
+const serialPrinter = require('./printers/serialPrinter')
 const tcpPrinter = require('./printers/tcpPrinter')
 
 async function processPendingJobs(deviceToken, { printerIdentityFallback } = {}) {
@@ -12,7 +13,12 @@ async function processPendingJobs(deviceToken, { printerIdentityFallback } = {})
       const printer =
         connectionType === 'network'
           ? tcpPrinter.build(job.options.address, job.options)
-          : usbPrinter.build(job.printerIdentity || printerIdentityFallback, job.options)
+          : connectionType === 'serial'
+            ? serialPrinter.build(job.options.serialPort, {
+                baudRate: job.options.serialBaudRate,
+                rtscts: job.options.serialRtscts,
+              })
+            : usbPrinter.build(job.printerIdentity || printerIdentityFallback, job.options)
 
       if (job.mode !== 'rawBase64' || !job.rawBase64) {
         throw new Error(`Job ${job.id} sem rawBase64 (mode=${job.mode})`)
