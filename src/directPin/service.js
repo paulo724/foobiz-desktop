@@ -163,6 +163,7 @@ function buildTransactionRequest(payload, terminalConfig) {
       autoConfirm: payload.autoConfirm ?? terminalConfig.autoConfirm,
       printReceipt: payload.printReceipt ?? terminalConfig.printReceipt,
       entityIdentifier: payload.entityIdentifier ?? terminalConfig.entityIdentifier ?? undefined,
+      customerId: payload.customerId ?? undefined,
   }
 
   if (payload.typeTransaction === 'CREDIT' && Number(payload.installment ?? 1) > 1) {
@@ -207,11 +208,68 @@ async function undo(nsu, config) {
   }, terminalConfig))))
 }
 
-async function cancel(nsu, config) {
-  return runExclusive('cancel', config, (client, terminalConfig) => client.send(stripUndefined(withEntity({
-    type: 'cancel_transaction',
-    nsu,
+async function cancel(nsu, config, onStatus = null) {
+  return runExclusive('cancel', config, async (client, terminalConfig) => {
+    const response = await client.send(stripUndefined(withEntity({
+      type: 'cancel_transaction',
+      nsu,
+    }, terminalConfig)))
+    return normalizeCancelResponse(response)
+  }, onStatus)
+}
+
+async function transactionStatus(customerId, config) {
+  return runExclusive('transactionStatus', config, (client, terminalConfig) => client.send(stripUndefined(withEntity({
+    type: 'transactionStatus',
+    customerId,
   }, terminalConfig))))
+}
+
+async function collect(payload, config, onStatus = null) {
+  return runExclusive('collect', config, (client, terminalConfig) => client.send(stripUndefined(withEntity({
+    type: 'collect',
+    title: payload?.title,
+    mask: payload?.mask,
+    inputType: payload?.inputType,
+  }, terminalConfig))), onStatus)
+}
+
+// Diferente da resposta de transaction (que sempre traz finalResult tipo
+// "APPROVED"), a resposta real do terminal para cancel_transaction NUNCA
+// inclui finalResult/codeResult — só {"result":true,"type":"CANCELLATION",
+// "message":"...",...} (confirmado em log real, electron-log main.log).
+//
+// IMPORTANTE: `result: true` NÃO significa sucesso do cancelamento — significa
+// só que o terminal processou e devolveu uma resposta (confirmado também em
+// log real: um cancelamento que falhou por cartão errado voltou com
+// {"result":true,"type":"CANCELLATION","message":"Falha no cancelamento da
+// transação","receiptContent":""}). O único sinal confiável de sucesso/falha
+// nesse payload é a mensagem em si. Não lança erro aqui (diferente de
+// ensureApprovedResponse): quem decide se o resultado é sucesso ou falha é
+// o chamador, olhando finalResult.
+const CANCEL_FAILURE_HINTS = ['falha', 'erro', 'recusad', 'negad', 'rejeitad', 'não aprovad', 'nao aprovad']
+
+function normalizeCancelResponse(response) {
+  const result = normalizeDirectPinResponse(response)
+  if (!result || typeof result !== 'object') return response
+
+  if (result.finalResult === undefined && result.final_result !== undefined) {
+    result.finalResult = result.final_result
+  }
+
+  if (result.finalResult === undefined) {
+    const type = String(result.type ?? '').toUpperCase()
+    const message = String(result.message ?? '').toLowerCase()
+    const looksLikeFailure = CANCEL_FAILURE_HINTS.some((hint) => message.includes(hint))
+
+    if (result.result === true && (type === 'CANCELLATION' || type === '') && !looksLikeFailure) {
+      result.finalResult = 'CANCELED'
+    } else if (looksLikeFailure) {
+      result.finalResult = 'DECLINED'
+    }
+  }
+
+  return response
 }
 
 async function abort(config) {
@@ -252,6 +310,8 @@ module.exports = {
   confirm,
   undo,
   cancel,
+  transactionStatus,
+  collect,
   abort,
   status,
   normalizeTerminalConfig,

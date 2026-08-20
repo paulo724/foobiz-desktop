@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancel: (nsu, config) => ipcRenderer.invoke('directpin:cancel', nsu, config),
     abort: (config) => ipcRenderer.invoke('directpin:abort', config),
     status: () => ipcRenderer.invoke('directpin:status'),
+    transactionStatus: (customerId, config) => ipcRenderer.invoke('directpin:transaction-status', customerId, config),
+    collect: (payload, config) => ipcRenderer.invoke('directpin:collect', payload, config),
     onStatus: (cb) => {
       const listener = (_, status) => cb(status)
       ipcRenderer.on('directpin:status', listener)

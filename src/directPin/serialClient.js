@@ -68,7 +68,7 @@ function writeAndDrain(port, data) {
 }
 
 function shortHex(buffer) {
-  return buffer.toString('hex').slice(0, 240)
+  return buffer.toString('hex').slice(0, 2000)
 }
 
 function tryParseLooseJson(buffer) {
@@ -271,6 +271,7 @@ class DirectPinSerialClient {
               clientVersion: SERIAL_CLIENT_VERSION,
               codeResult: loose?.codeResult ?? loose?.code_result ?? null,
               finalResult: loose?.finalResult ?? loose?.final_result ?? null,
+              fullPayload: JSON.stringify(loose),
             })
             this.emitStatus('response_received', {
               format: 'loose',

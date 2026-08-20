@@ -26,6 +26,7 @@ module.exports = {
 
   extraMetadata: {
     main: 'src/main.js',
+    foobiz: { appType: 'pdv' },
   },
 
   win: {

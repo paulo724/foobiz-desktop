@@ -51,7 +51,11 @@ process.on('unhandledRejection', (reason) => {
 })
 
 // APP_TYPE: 'totem' | 'kds' | 'pdv'
-const APP_TYPE = process.env.FOOBIZ_APP || 'pdv'
+// Em dev, vem da env var setada pelo script npm (cross-env FOOBIZ_APP=...).
+// Em build empacotado, a env var não sobrevive ao processo do electron-builder,
+// então cada config grava foobiz.appType no package.json via extraMetadata.
+const APP_TYPE = process.env.FOOBIZ_APP || require('../package.json').foobiz?.appType || 'pdv'
+log.info('desktop: APP_TYPE resolvido', { APP_TYPE })
 
 const APP_CONFIG = {
   totem: {
@@ -327,9 +331,15 @@ function setupDirectPinHandlers(ipcMain) {
   }))
   ipcMain.handle('directpin:confirm', (_, nsu, config) => directPin.confirm(nsu, config))
   ipcMain.handle('directpin:undo', (_, nsu, config) => directPin.undo(nsu, config))
-  ipcMain.handle('directpin:cancel', (_, nsu, config) => directPin.cancel(nsu, config))
+  ipcMain.handle('directpin:cancel', (event, nsu, config) => directPin.cancel(nsu, config, (status) => {
+    event.sender.send('directpin:status', status)
+  }))
   ipcMain.handle('directpin:abort', (_, config) => directPin.abort(config))
   ipcMain.handle('directpin:status', () => directPin.status())
+  ipcMain.handle('directpin:transaction-status', (_, customerId, config) => directPin.transactionStatus(customerId, config))
+  ipcMain.handle('directpin:collect', (event, payload, config) => directPin.collect(payload, config, (status) => {
+    event.sender.send('directpin:status', status)
+  }))
 }
 
 function setupPlugPagHandlers(ipcMain) {
