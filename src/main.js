@@ -12,6 +12,8 @@ const { startStaticServer } = require('./staticServer')
 
 const appSettingsStore = new Store({ name: 'app-settings' })
 
+app.commandLine.appendSwitch('disable-gpu-rasterization')
+
 log.transports.file.level = 'info'
 
 log.info('desktop: main carregado', {
