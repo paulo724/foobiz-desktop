@@ -89,6 +89,9 @@ const APP_CONFIG = {
 const config = APP_CONFIG[APP_TYPE] ?? APP_CONFIG.pdv
 const isDev = !app.isPackaged
 
+app.setAppUserModelId(`com.foobiz.${APP_TYPE}`)
+app.setName(config.title)
+
 let mainWindow = null
 let desiredKioskMode = APP_TYPE === 'totem'
   && appSettingsStore.get(`kioskMode.${APP_TYPE}`, config.kiosk === true)
@@ -323,6 +326,7 @@ function setupPrintBridgeHandlers(ipcMain) {
   ipcMain.handle('printbridge:pair', (_, device) => printBridge.pairDevice(device))
   ipcMain.handle('printbridge:unpair', (_, deviceId) => printBridge.unpairDevice(deviceId))
   ipcMain.handle('printbridge:status', () => printBridge.status())
+  ipcMain.handle('printbridge:print', (_, payload) => printBridge.printNow(payload))
 }
 
 function setupDirectPinHandlers(ipcMain) {

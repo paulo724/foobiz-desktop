@@ -4,35 +4,56 @@ const usbPrinter = require('./printers/usbPrinter')
 const serialPrinter = require('./printers/serialPrinter')
 const tcpPrinter = require('./printers/tcpPrinter')
 
-async function processPendingJobs(deviceToken, { printerIdentityFallback } = {}) {
+// Resolve o driver de impressora (usb/serial/network) a partir das opções de
+// conexão de um job ou de um device pareado. Roda dentro do worker de cada
+// impressora (ver printerWorker.js) — nunca no main process.
+function resolvePrinter({ connectionType, address, serialPort, serialBaudRate, serialRtscts, printerIdentity, printerIdentityFallback }) {
+  const type = connectionType || 'usb'
+
+  if (type === 'network') {
+    return tcpPrinter.build(address, {})
+  }
+
+  if (type === 'serial') {
+    return serialPrinter.build(serialPort, { baudRate: serialBaudRate, rtscts: serialRtscts })
+  }
+
+  return usbPrinter.build(printerIdentity || printerIdentityFallback)
+}
+
+// deviceId é passado pelo chamador (startDevice conhece o device do pull em
+// andamento) — usado para enfileirar no mesmo worker por impressora que a
+// impressão local (printNow) usa, para as duas vias nunca escreverem na
+// mesma porta ao mesmo tempo.
+async function processPendingJobs(deviceId, deviceToken, { printerIdentityFallback, printOnWorker } = {}) {
   const { jobs } = await apiClient.pull(deviceToken, { limit: 5 })
 
   for (const job of jobs) {
-    try {
-      const connectionType = job.options?.connection_type || 'usb'
-      const printer =
-        connectionType === 'network'
-          ? tcpPrinter.build(job.options.address, job.options)
-          : connectionType === 'serial'
-            ? serialPrinter.build(job.options.serialPort, {
-                baudRate: job.options.serialBaudRate,
-                rtscts: job.options.serialRtscts,
-              })
-            : usbPrinter.build(job.printerIdentity || printerIdentityFallback, job.options)
+    if (job.mode !== 'rawBase64' || !job.rawBase64) {
+      log.error(`printBridge: job ${job.id} sem rawBase64 (mode=${job.mode})`)
+      await apiClient.ack(deviceToken, job.id, { status: 'failed', error: `sem rawBase64 (mode=${job.mode})` }).catch(() => {})
+      continue
+    }
 
-      if (job.mode !== 'rawBase64' || !job.rawBase64) {
-        throw new Error(`Job ${job.id} sem rawBase64 (mode=${job.mode})`)
-      }
+    const result = await printOnWorker(deviceId, {
+      connectionType: job.options?.connection_type,
+      address: job.options?.address,
+      serialPort: job.options?.serialPort,
+      serialBaudRate: job.options?.serialBaudRate,
+      serialRtscts: job.options?.serialRtscts,
+      printerIdentity: job.printerIdentity,
+      printerIdentityFallback,
+    }, job.rawBase64)
 
-      await printer.printRaw(Buffer.from(job.rawBase64, 'base64'))
+    if (result.success) {
       await apiClient.ack(deviceToken, job.id, { status: 'printed' })
-    } catch (err) {
-      log.error('printBridge: falha ao processar job', job.id, err)
-      await apiClient.ack(deviceToken, job.id, { status: 'failed', error: String(err?.message || err) }).catch(() => {})
+    } else {
+      log.error('printBridge: falha ao processar job', job.id, result.error)
+      await apiClient.ack(deviceToken, job.id, { status: 'failed', error: result.error }).catch(() => {})
     }
   }
 
   return jobs.length
 }
 
-module.exports = { processPendingJobs }
+module.exports = { processPendingJobs, resolvePrinter }
