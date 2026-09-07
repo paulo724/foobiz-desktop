@@ -3,6 +3,7 @@ const { Worker } = require('worker_threads')
 const log = require('electron-log')
 
 const PRINT_TIMEOUT_MS = 8000
+const HEALTH_TIMEOUT_MS = 4000
 const WORKER_PATH = path.join(__dirname, 'printerWorker.js')
 
 const workers = new Map() // deviceId -> { worker, pending: Map<id, {resolve}> }
@@ -21,7 +22,13 @@ function getOrCreateWorker(deviceId) {
     if (!pending) return
     entry.pending.delete(msg.id)
     clearTimeout(pending.timer)
-    pending.resolve(msg.success ? { success: true } : { success: false, error: msg.error })
+    if (!msg.success) {
+      pending.resolve({ success: false, error: msg.error })
+      return
+    }
+    pending.resolve(
+      msg.online === undefined ? { success: true } : { success: true, online: msg.online },
+    )
   })
 
   worker.on('error', (err) => {
@@ -60,15 +67,31 @@ function printOnWorker(deviceId, printerConfig, payloadBase64) {
         success: false,
         error: `Impressora não respondeu em ${PRINT_TIMEOUT_MS / 1000}s (offline, sem papel ou porta ocupada).`,
       })
-      // Impressora síncrona travada trava a thread do worker inteira — não
-      // dá pra confiar que ela volte a responder depois. Reinicia o worker
-      // para os próximos jobs dessa impressora não ficarem presos atrás dele.
+
       entry.worker.terminate().catch(() => {})
       workers.delete(deviceId)
     }, PRINT_TIMEOUT_MS)
 
     entry.pending.set(id, { resolve, timer })
     entry.worker.postMessage({ type: 'print', id, printerConfig, payloadBase64 })
+  })
+}
+
+// Testa a porta/impressora sem imprimir nada — entra na mesma fila/worker
+// que os jobs de impressão (mesmo lock por deviceId), então nunca abre a
+// porta ao mesmo tempo que um job real está escrevendo nela.
+function checkHealthOnWorker(deviceId, printerConfig) {
+  const entry = getOrCreateWorker(deviceId)
+  const id = nextRequestId++
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      entry.pending.delete(id)
+      resolve({ success: true, online: false })
+    }, HEALTH_TIMEOUT_MS)
+
+    entry.pending.set(id, { resolve, timer })
+    entry.worker.postMessage({ type: 'health', id, printerConfig })
   })
 }
 
@@ -80,4 +103,4 @@ function stopWorker(deviceId) {
   workers.delete(deviceId)
 }
 
-module.exports = { printOnWorker, stopWorker }
+module.exports = { printOnWorker, checkHealthOnWorker, stopWorker }

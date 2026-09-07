@@ -325,6 +325,7 @@ function setupPrintBridgeHandlers(ipcMain) {
   ipcMain.handle('printbridge:set-api-config', (_, cfg) => printBridge.setApiConfig(cfg))
   ipcMain.handle('printbridge:pair', (_, device) => printBridge.pairDevice(device))
   ipcMain.handle('printbridge:unpair', (_, deviceId) => printBridge.unpairDevice(deviceId))
+  ipcMain.handle('printbridge:reset-all', () => printBridge.resetAll())
   ipcMain.handle('printbridge:status', () => printBridge.status())
   ipcMain.handle('printbridge:print', (_, payload) => printBridge.printNow(payload))
 }

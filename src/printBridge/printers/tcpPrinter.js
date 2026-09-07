@@ -16,6 +16,14 @@ function build(address, options = {}) {
       printer.add(buffer)
       await printer.execute()
     },
+
+    async checkHealth() {
+      try {
+        return await printer.isPrinterConnected()
+      } catch {
+        return false
+      }
+    },
   }
 }
 

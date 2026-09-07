@@ -50,8 +50,12 @@ function connect(token, { hostname, platform } = {}) {
   return request('/bridge/connect', { method: 'POST', token, body: { hostname, platform } })
 }
 
-function heartbeat(token, { hostname, platform } = {}) {
-  return request('/bridge/heartbeat', { method: 'POST', token, body: { hostname, platform } })
+function heartbeat(token, { hostname, platform, printerOnline } = {}) {
+  const body = { hostname, platform }
+  if (printerOnline !== undefined && printerOnline !== null) {
+    body.printer_online = printerOnline
+  }
+  return request('/bridge/heartbeat', { method: 'POST', token, body })
 }
 
 function disconnect(token) {

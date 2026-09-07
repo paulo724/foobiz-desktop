@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setApiConfig: (cfg) => ipcRenderer.invoke('printbridge:set-api-config', cfg),
     pairDevice: (device) => ipcRenderer.invoke('printbridge:pair', device),
     unpairDevice: (deviceId) => ipcRenderer.invoke('printbridge:unpair', deviceId),
+    resetAll: () => ipcRenderer.invoke('printbridge:reset-all'),
     status: () => ipcRenderer.invoke('printbridge:status'),
     print: (payload) => ipcRenderer.invoke('printbridge:print', payload),
   },

@@ -1,95 +1,49 @@
-const koffi = require('koffi')
-
-let winspool = null
-let OpenPrinterA = null
-let ClosePrinter = null
-let StartDocPrinterA = null
-let EndDocPrinter = null
-let StartPagePrinter = null
-let EndPagePrinter = null
-let WritePrinter = null
-let GetLastError = null
-
-function loadWinspool() {
-  if (winspool) return
-
-  winspool = koffi.load('winspool.drv')
-  const kernel32 = koffi.load('kernel32.dll')
-
-  koffi.struct('DOCINFOA', {
-    pDocName: 'str',
-    pOutputFile: 'str',
-    pDataType: 'str',
-  })
-
-  OpenPrinterA = winspool.func('bool __stdcall OpenPrinterA(str pPrinterName, _Out_ void **phPrinter, void *pDefault)')
-  ClosePrinter = winspool.func('bool __stdcall ClosePrinter(void *hPrinter)')
-  StartDocPrinterA = winspool.func('int __stdcall StartDocPrinterA(void *hPrinter, uint32_t level, const DOCINFOA *pDocInfo)')
-  EndDocPrinter = winspool.func('bool __stdcall EndDocPrinter(void *hPrinter)')
-  StartPagePrinter = winspool.func('bool __stdcall StartPagePrinter(void *hPrinter)')
-  EndPagePrinter = winspool.func('bool __stdcall EndPagePrinter(void *hPrinter)')
-  WritePrinter = winspool.func('bool __stdcall WritePrinter(void *hPrinter, void *pBuf, uint32_t cbBuf, _Out_ uint32_t *pcWritten)')
-  GetLastError = kernel32.func('uint32_t __stdcall GetLastError()')
-}
-
-function win32Error() {
-  try {
-    return GetLastError()
-  } catch {
-    return 'desconhecido'
-  }
-}
-
-function sendRawBytesToPrinter(printerName, buffer) {
-  loadWinspool()
-
-  const hPrinterOut = [null]
-  if (!OpenPrinterA(printerName, hPrinterOut, null)) {
-    throw new Error(`OpenPrinter falhou para "${printerName}" (Win32Error=${win32Error()})`)
-  }
-  const hPrinter = hPrinterOut[0]
-
-  try {
-    const jobId = StartDocPrinterA(hPrinter, 1, {
-      pDocName: 'ESC/POS Job',
-      pOutputFile: null,
-      pDataType: 'RAW',
-    })
-    if (jobId <= 0) {
-      throw new Error(`StartDocPrinter falhou (Win32Error=${win32Error()})`)
-    }
-
-    try {
-      if (!StartPagePrinter(hPrinter)) {
-        throw new Error(`StartPagePrinter falhou (Win32Error=${win32Error()})`)
-      }
-
-      try {
-        const writtenOut = [0]
-        const ok = WritePrinter(hPrinter, buffer, buffer.length, writtenOut)
-        const written = writtenOut[0]
-        if (!ok || written !== buffer.length) {
-          throw new Error(`WritePrinter falhou: escreveu ${written}/${buffer.length} bytes (Win32Error=${win32Error()})`)
-        }
-      } finally {
-        EndPagePrinter(hPrinter)
-      }
-    } finally {
-      EndDocPrinter(hPrinter)
-    }
-  } finally {
-    ClosePrinter(hPrinter)
-  }
-}
+// Impressão via spooler do SO usando node-thermal-printer (mesma técnica já
+// usada e comprovada em src/printer.js, usado pelo PDV/Totem). Antes esta
+// função usava koffi para chamar winspool.drv/kernel32.dll diretamente via
+// FFI dentro de um worker_thread — essa combinação (FFI nativo + thread
+// isolada) provocava crash nativo do processo Electron inteiro sem stack
+// trace JS capturável, porque uma falha nesse nível não é uma exceção da VM
+// do V8 que o worker.on('error') consiga interceptar.
+const { ThermalPrinter, PrinterTypes, CharacterSet } = require('node-thermal-printer')
 
 function build(printerName) {
   return {
     async printRaw(buffer) {
-      if (process.platform !== 'win32') {
-        throw new Error('Impressão USB/spooler só é suportada no Windows.')
-      }
+      const printer = new ThermalPrinter({
+        type: PrinterTypes.EPSON,
+        interface: `printer:${printerName}`,
+        characterSet: CharacterSet.PC858_EURO,
+        removeSpecialCharacters: false,
+        lineCharacter: '-',
+        options: { timeout: 5000 },
+      })
 
-      sendRawBytesToPrinter(printerName, buffer)
+      printer.clear()
+      printer.add(buffer)
+      await printer.execute()
+    },
+
+    // Healthcheck: node-thermal-printer sabe checar se o spooler enxerga a
+    // impressora sem enviar nenhum dado — usado para o status Online/Offline
+    // refletir a impressora de verdade, não só a conexão do bridge com o
+    // backend. Na interface de spooler (printer:), a lib faz `throw false`
+    // em vez de resolver/rejeitar como erro, então precisa de try/catch em
+    // vez de só `await`.
+    async checkHealth() {
+      const printer = new ThermalPrinter({
+        type: PrinterTypes.EPSON,
+        interface: `printer:${printerName}`,
+        characterSet: CharacterSet.PC858_EURO,
+        removeSpecialCharacters: false,
+        lineCharacter: '-',
+        options: { timeout: 3000 },
+      })
+      try {
+        return await printer.isPrinterConnected()
+      } catch {
+        return false
+      }
     },
   }
 }

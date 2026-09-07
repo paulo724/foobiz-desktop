@@ -35,6 +35,15 @@ function removeDevice(deviceId) {
   return devices
 }
 
+// Limpa todos os devices pareados localmente (mas mantém apiBaseUrl/tenantCode).
+// Usado quando o cache local diverge do backend (ex.: devices removidos pela
+// UI web mas ainda salvos aqui, tentando autenticar com token que não existe
+// mais e gerando "Invalid station token" em loop no printBridge).
+function clearDevices() {
+  store.set('devices', [])
+  return []
+}
+
 module.exports = {
   getApiBaseUrl,
   setApiBaseUrl,
@@ -43,4 +52,5 @@ module.exports = {
   getDevices,
   saveDevice,
   removeDevice,
+  clearDevices,
 }

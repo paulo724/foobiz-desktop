@@ -1,40 +1,34 @@
-const { SerialPort } = require('serialport')
+const fs = require('fs')
 
 // Impressão via porta serial virtual (COM), sem passar pelo spooler do
 // Windows. Cobre impressoras térmicas que expõem um chip USB-Serial
 // (CDC/CH340/FTDI/PL2303) e aparecem como "COMx" no Gerenciador de
 // Dispositivos > Portas (COM e LPT), em vez de USB Printing Class.
+//
+// Escreve direto no arquivo de dispositivo da porta (\\.\COM7) usando fs do
+// Node — sem nenhum binding nativo (C++/N-API) de terceiros. Antes usava o
+// pacote `serialport`, mas port.write() causava um crash nativo do processo
+// inteiro (confirmado via logging granular: o callback de write() nunca
+// disparava, mesmo com o buffer chegando fisicamente na impressora) — um bug
+// no binding `@serialport/bindings-cpp` nesta combinação específica de
+// driver Windows/Electron, não relacionado a parâmetros como rtscts/baudRate.
+// fs.open/write/close usam apenas a API de arquivo do SO (CreateFile/
+// WriteFile por baixo, via libuv), o mesmo caminho que qualquer programa
+// Node usa para qualquer arquivo — sem código nativo de terceiros.
 
-function openPort(path, baudRate, rtscts) {
-  return new Promise((resolve, reject) => {
-    const port = new SerialPort({ path, baudRate, rtscts, autoOpen: false })
-    port.open((err) => (err ? reject(err) : resolve(port)))
-  })
-}
-
-function closePort(port) {
-  return new Promise((resolve) => {
-    if (!port?.isOpen) return resolve()
-    port.close(() => resolve())
-  })
-}
-
-function writeAndDrain(port, buffer) {
-  return new Promise((resolve, reject) => {
-    port.write(buffer, (writeErr) => {
-      if (writeErr) return reject(writeErr)
-      port.drain((drainErr) => (drainErr ? reject(drainErr) : resolve()))
-    })
-  })
+function devicePath(name) {
+  // COM10 e acima exigem o prefixo \\.\ para o Win32 CreateFile funcionar;
+  // COM1-9 aceitam com ou sem prefixo, então sempre normalizamos.
+  const trimmed = String(name || '').trim()
+  if (trimmed.startsWith('\\\\.\\')) return trimmed
+  return `\\\\.\\${trimmed}`
 }
 
 function build(path, options = {}) {
-  // Impressoras térmicas com "Virtual COM" (ex: Bematech MP-4200 TH) tipicamente
-  // operam a 115200 8N1 com controle de fluxo por hardware (RTS/CTS) — usar um
-  // baud rate ou rtscts diferente do configurado no Windows (Painel de
-  // Dispositivos > Propriedades da porta) causa timeouts/lentidão na escrita.
-  const baudRate = options.baudRate || 115200
-  const rtscts = options.rtscts !== false
+  void options // baudRate/rtscts não se aplicam aqui — a porta já está
+  // configurada (baud rate, paridade, bits) pelo driver/Painel de
+  // Dispositivos do Windows; escrever no arquivo de dispositivo usa essa
+  // configuração já ativa, sem reconfigurar a porta a cada job.
 
   return {
     async printRaw(buffer) {
@@ -42,12 +36,24 @@ function build(path, options = {}) {
         throw new Error('serial requer a porta COM configurada no dispositivo.')
       }
 
-      const port = await openPort(path, baudRate, rtscts)
+      const target = devicePath(path)
+      const handle = await fs.promises.open(target, 'w')
       try {
-        await writeAndDrain(port, buffer)
+        await handle.writeFile(buffer)
       } finally {
-        await closePort(port)
+        await handle.close()
       }
+    },
+
+    // Healthcheck: só abre e fecha o handle da porta, sem escrever nada —
+    // confirma que a porta COM existe e está livre (não em uso por outro
+    // processo), sem imprimir uma página em branco a cada verificação.
+    async checkHealth() {
+      if (!path) return false
+      const target = devicePath(path)
+      const handle = await fs.promises.open(target, 'r+')
+      await handle.close()
+      return true
     },
   }
 }
