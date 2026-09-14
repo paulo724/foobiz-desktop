@@ -59,6 +59,8 @@ process.on('unhandledRejection', (reason) => {
 const APP_TYPE = process.env.FOOBIZ_APP || require('../package.json').foobiz?.appType || 'pdv'
 log.info('desktop: APP_TYPE resolvido', { APP_TYPE })
 
+// devPort: porta do dev server Vite de cada app separado (ver
+// apps/{pdv,kds,totem}/vite.config.js no repositório foobiz-frontend).
 const APP_CONFIG = {
   totem: {
     title: 'Foobiz Totem',
@@ -66,6 +68,7 @@ const APP_CONFIG = {
     height: 1920,
     kiosk: true,
     startPath: '/totem',
+    devPort: 5176,
     iconFile: 'icon-totem-foobiz.png',
   },
   kds: {
@@ -74,6 +77,7 @@ const APP_CONFIG = {
     height: 800,
     kiosk: false,
     startPath: '/kds',
+    devPort: 5175,
     iconFile: 'icon-kds-foobiz.png',
   },
   pdv: {
@@ -82,6 +86,7 @@ const APP_CONFIG = {
     height: 768,
     kiosk: false,
     startPath: '/pdv',
+    devPort: 5177,
     iconFile: 'icon-pdv-foobiz.png',
   },
 }
@@ -199,8 +204,9 @@ function createWindow() {
   })
 
   if (isDev) {
-    // Em dev, carrega o servidor Vite local
-    const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
+    // Em dev, carrega o servidor Vite local do app correspondente
+    // (cada app — pdv/kds/totem — roda em uma porta própria, ver devPort).
+    const devUrl = process.env.VITE_DEV_SERVER_URL || `http://localhost:${config.devPort}`
     mainWindow.loadURL(devUrl + config.startPath)
     mainWindow.webContents.openDevTools()
   } else {
@@ -442,7 +448,7 @@ app.on('will-quit', () => {
 // Bloqueia navegação para URLs externas (segurança para modo quiosque)
 app.on('web-contents-created', (_, contents) => {
   contents.on('will-navigate', (event, url) => {
-    const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
+    const devUrl = process.env.VITE_DEV_SERVER_URL || `http://localhost:${config.devPort}`
     const isAllowed = url.startsWith(devUrl)
       || url.startsWith('file://')
       || (staticServerOrigin && url.startsWith(staticServerOrigin))

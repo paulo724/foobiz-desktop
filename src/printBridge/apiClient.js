@@ -78,4 +78,12 @@ function ack(token, jobId, { status, error } = {}) {
   return request(`/print-jobs/${jobId}/ack`, { method: 'POST', token, body: { status, error } })
 }
 
-module.exports = { connect, heartbeat, disconnect, broadcastingAuth, pull, ack }
+// 401/403 nesta API significa station token revogado/deletado no backend —
+// nunca vai se resolver sozinho tentando de novo (diferente de timeout/5xx,
+// que são transitórios). Usado para parar de martelar um device órfão em
+// loop em vez de reconectar/repuxar indefinidamente.
+function isAuthError(err) {
+  return err?.status === 401 || err?.status === 403
+}
+
+module.exports = { connect, heartbeat, disconnect, broadcastingAuth, pull, ack, isAuthError }

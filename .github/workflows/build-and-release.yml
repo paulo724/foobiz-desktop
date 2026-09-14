@@ -1,8 +1,9 @@
 name: Build and Release
 
 # Acionado pelo repositório FOOBIZ (repository_dispatch) quando uma tag
-# v* é publicada lá. Baixa o frontend/dist já buildado, gera os 3
-# instaladores Windows e publica a release no GitHub.
+# v* é publicada lá. Baixa os 3 builds do frontend (pdv/kds/totem, cada um
+# uma SPA independente desde a separação de apps), gera os 3 instaladores
+# Windows e publica a release no GitHub.
 on:
   repository_dispatch:
     types: [build-desktop]
@@ -30,16 +31,19 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Download frontend dist
+      - name: Download frontend dist (pdv, kds, totem — um zip por app)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.FOOBIZ_READ_TOKEN }}
         run: |
           gh release download "$VERSION" \
             --repo solubiztecnologia/FOOBIZ \
-            --pattern frontend-dist.zip
-          mkdir -p frontend
-          unzip -o frontend-dist.zip -d frontend
+            --pattern "*-dist.zip"
+
+          mkdir -p frontend/pdv-dist frontend/kds-dist frontend/totem-dist
+          unzip -o pdv-dist.zip -d frontend/pdv-dist
+          unzip -o kds-dist.zip -d frontend/kds-dist
+          unzip -o totem-dist.zip -d frontend/totem-dist
 
       - name: Set version
         shell: bash
@@ -63,10 +67,29 @@ jobs:
             --notes "Build automático — PDV, KDS, Totem." \
             --draft
 
-      - name: Build and publish (PDV, KDS, Totem)
+      - name: Build and publish PDV
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          rm -rf frontend/dist
+          cp -r frontend/pdv-dist frontend/dist
           npm run build:pdv -- --publish always
+
+      - name: Build and publish KDS
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -rf frontend/dist
+          cp -r frontend/kds-dist frontend/dist
           npm run build:kds -- --publish always
+
+      - name: Build and publish Totem
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -rf frontend/dist
+          cp -r frontend/totem-dist frontend/dist
           npm run build:totem -- --publish always

@@ -101,6 +101,17 @@ async function startDevice(device) {
   // (ex.: job de teste criado logo antes de um tick do timer), disparando
   // chamadas concorrentes ao worker de impressão da mesma porta/spooler, o
   // que pode corromper o handle nativo e derrubar o processo inteiro.
+  // Token 401/403 é definitivo (station deletada/revogada no backend) — nunca
+  // se resolve tentando de novo. Sem isso, o device fica martelando pull a
+  // cada POLL_INTERVAL_MS e heartbeat a cada HEARTBEAT_INTERVAL_MS para
+  // sempre, um por device pareado localmente, poluindo o log indefinidamente
+  // mesmo depois de reiniciar o app (o pareamento órfão persiste no store).
+  const forgetOrphanDevice = () => {
+    log.warn(`printBridge: device ${device.deviceId} com token inválido/revogado — removendo pareamento local.`)
+    stopDevice(device.deviceId)
+    store.removeDevice(device.deviceId)
+  }
+
   let pulling = false
   const runPull = async () => {
     if (pulling) return
@@ -116,6 +127,7 @@ async function startDevice(device) {
     } catch (err) {
       state.lastError = String(err?.message || err)
       log.error(`printBridge: erro ao puxar jobs do device ${device.deviceId}`, err)
+      if (apiClient.isAuthError(err)) forgetOrphanDevice()
     } finally {
       pulling = false
     }
@@ -137,6 +149,7 @@ async function startDevice(device) {
       })
     } catch (err) {
       log.error(`printBridge: falha ao enviar heartbeat do device ${device.deviceId}`, err)
+      if (apiClient.isAuthError(err)) forgetOrphanDevice()
     }
   }
 
@@ -161,6 +174,10 @@ async function startDevice(device) {
   } catch (err) {
     state.lastError = String(err?.message || err)
     log.error(`printBridge: falha ao conectar device ${device.deviceId}`, err)
+    if (apiClient.isAuthError(err)) {
+      forgetOrphanDevice()
+      return
+    }
   }
 
   // Testa a porta/impressora de verdade (abre a porta COM, ou pergunta ao

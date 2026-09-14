@@ -1,6 +1,7 @@
 const { app } = require('electron')
 const { ThermalPrinter, PrinterTypes, CharacterSet } = require('node-thermal-printer')
 const log = require('electron-log')
+const winspool = require('./printBridge/printers/winspool')
 
 function setupPrinterHandlers(ipcMain) {
 
@@ -126,15 +127,31 @@ function setupPrinterHandlers(ipcMain) {
   })
 }
 
+// node-thermal-printer só usa a `interface` para montar comandos ESC/POS no
+// buffer interno (println/bold/cut/etc. são todos síncronos, sem tocar a
+// interface) — o envio de fato só acontece em execute(). Passamos um objeto
+// como interface (getInterface() do node-thermal-printer aceita `typeof uri
+// === 'object'` e usa direto, sem tentar resolver a string 'printer:<nome>').
+// Isso evita depender da interface `printer:` da lib, que exige um driver
+// nativo (pacote npm `printer`) nunca instalado neste projeto e sempre lançava
+// "No driver set!" já na criação do ThermalPrinter. O envio real do buffer
+// pronto acontece via winspool.printRaw (koffi -> winspool.drv), no processo
+// principal do Electron — ver src/printBridge/printers/winspool.js.
 function createPrinter(printerName) {
-  return new ThermalPrinter({
+  const printer = new ThermalPrinter({
     type: PrinterTypes.EPSON,
-    interface: `printer:${printerName}`,
+    interface: { execute: async () => {} },
     characterSet: CharacterSet.PC858_EURO,
     removeSpecialCharacters: false,
     lineCharacter: '-',
     options: { timeout: 5000 },
   })
+
+  printer.execute = async () => {
+    winspool.printRaw(printerName, printer.getBuffer())
+  }
+
+  return printer
 }
 
 function formatPrice(value) {
