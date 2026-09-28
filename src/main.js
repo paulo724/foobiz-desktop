@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, globalShortcut, ipcMain, shell, Tray, Menu, dialog } = require('electron')
 const path = require('path')
 const log = require('electron-log')
 const Store = require('electron-store')
@@ -92,6 +92,29 @@ const APP_CONFIG = {
 }
 
 const config = APP_CONFIG[APP_TYPE] ?? APP_CONFIG.pdv
+let printTray = null
+let isQuitting = false
+if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0) }
+app.on('second-instance', () => { mainWindow?.show(); mainWindow?.focus() })
+function setupPrintTray() {
+  printTray = new Tray(app.isPackaged ? path.join(process.resourcesPath, 'icons', config.iconFile) : path.join(__dirname, '../resources/icons', config.iconFile))
+  printTray.setToolTip(`${config.title} — Impressão em segundo plano`)
+  const open = () => { mainWindow?.show(); mainWindow?.focus() }
+  printTray.on('double-click', open)
+  printTray.setContextMenu(Menu.buildFromTemplate([
+    { label: `Abrir ${config.title}`, click: open },
+    { label: 'Encerrar aplicativo', click: async () => {
+      if (printBridge.hasDevices()) {
+        const names = printBridge.status().map(d => d.stationName || d.name || `Impressora ${d.deviceId}`).join(', ')
+        const result = await dialog.showMessageBox({ type: 'question', buttons: ['Continuar imprimindo', 'Encerrar'], defaultId: 0, cancelId: 0, message: 'Encerrar interrompe as impressões neste computador.', detail: names })
+        if (result.response !== 1) return
+      }
+      app.quit()
+    } },
+  ]))
+}
+app.on('before-quit', () => { isQuitting = true; printBridge.stopAll() })
+
 const isDev = !app.isPackaged
 
 app.setAppUserModelId(`com.foobiz.${APP_TYPE}`)
@@ -269,6 +292,12 @@ function createWindow() {
     mainWindow?.webContents?.send('app:fullscreen-changed', false)
   })
 
+  mainWindow.on('close', (event) => {
+    if (!isQuitting && printTray && printBridge.hasDevices() && appSettingsStore.get('printBackground', true)) {
+      event.preventDefault()
+      mainWindow.hide()
+    }
+  })
   mainWindow.on('closed', () => { mainWindow = null })
 
   mainWindow.once('ready-to-show', () => {
@@ -313,6 +342,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+  setupPrintTray()
   setupPrinterHandlers(ipcMain)
   setupPrintBridgeHandlers(ipcMain)
   setupDirectPinHandlers(ipcMain)
@@ -327,6 +357,11 @@ app.whenReady().then(async () => {
 })
 
 function setupPrintBridgeHandlers(ipcMain) {
+  ipcMain.handle('printbridge:identity', () => printBridge.identity())
+  ipcMain.handle('printbridge:background', (_, enabled) => {
+    if (typeof enabled === 'boolean') appSettingsStore.set('printBackground', enabled)
+    return appSettingsStore.get('printBackground', true)
+  })
   ipcMain.handle('printbridge:discover', () => printBridge.discover())
   ipcMain.handle('printbridge:set-api-config', (_, cfg) => printBridge.setApiConfig(cfg))
   ipcMain.handle('printbridge:pair', (_, device) => printBridge.pairDevice(device))

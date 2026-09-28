@@ -1,3 +1,4 @@
+const { app } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const log = require('electron-log')
 
@@ -43,6 +44,7 @@ function setupUpdater(mainWindow) {
   const { ipcMain } = require('electron')
   ipcMain.handle('update:check', () => autoUpdater.checkForUpdates())
   ipcMain.handle('update:install', () => {
+    app.emit('before-quit')
     autoUpdater.quitAndInstall()
   })
 

@@ -1,4 +1,6 @@
 const Store = require('electron-store')
+const { randomUUID, randomBytes } = require('crypto')
+const os = require('os')
 
 const store = new Store({ name: 'print-bridge' })
 
@@ -44,7 +46,30 @@ function clearDevices() {
   return []
 }
 
+function identity() {
+  if (!store.get('executorId')) store.set('executorId', randomUUID())
+  if (!store.get('executorSecret')) store.set('executorSecret', randomBytes(32).toString('hex'))
+  return { executor_id: store.get('executorId'), executor_secret: store.get('executorSecret'), name: os.hostname(), version: require('../../package.json').version }
+}
+function scope() { return `${getApiBaseUrl()}|${getTenantCode()}` }
+function journalKey(attemptId) { return `${scope()}|${attemptId}` }
+function journalGet(attemptId) { return store.get('journal', {})[journalKey(attemptId)] }
+function journalSet(attemptId, record) {
+  const rows = store.get('journal', {})
+  rows[journalKey(attemptId)] = { ...record, updatedAt: Date.now() }
+  store.set('journal', rows)
+}
+function pendingJournal(deviceId) {
+  const prefix = `${scope()}|`
+  return Object.entries(store.get('journal', {})).filter(([key, row]) => key.startsWith(prefix) && row.deviceId === deviceId && !row.acknowledged).map(([, row]) => row)
+}
+function pruneJournal() {
+  const rows = store.get('journal', {})
+  for (const [key, row] of Object.entries(rows)) if (row.acknowledged && row.updatedAt < Date.now() - 30 * 86400000) delete rows[key]
+  store.set('journal', rows)
+}
 module.exports = {
+  identity, scope, journalGet, journalSet, pendingJournal, pruneJournal,
   getApiBaseUrl,
   setApiBaseUrl,
   getTenantCode,

@@ -5,7 +5,7 @@
 // por vez, na ordem de chegada, evitando duas escritas concorrentes na
 // mesma porta.
 const { parentPort } = require('worker_threads')
-const { resolvePrinter } = require('./jobProcessor')
+const { resolvePrinter } = require('./resolvePrinter')
 
 const queue = []
 let processing = false

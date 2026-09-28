@@ -23,6 +23,8 @@ async function request(path, { method = 'GET', token, body } = {}) {
         'Content-Type': 'application/json',
         Accept: 'application/json',
         ...(token ? { 'X-Station-Token': token } : {}),
+        'X-Print-Executor': store.identity().executor_id,
+        'X-Print-Secret': store.identity().executor_secret,
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
@@ -50,10 +52,11 @@ function connect(token, { hostname, platform } = {}) {
   return request('/bridge/connect', { method: 'POST', token, body: { hostname, platform } })
 }
 
-function heartbeat(token, { hostname, platform, printerOnline } = {}) {
+function heartbeat(token, { hostname, platform, printerOnline, printerStatusReason } = {}) {
   const body = { hostname, platform }
   if (printerOnline !== undefined && printerOnline !== null) {
     body.printer_online = printerOnline
+    body.printer_status_reason = printerStatusReason || null
   }
   return request('/bridge/heartbeat', { method: 'POST', token, body })
 }
@@ -74,8 +77,8 @@ function pull(token, { limit = 5 } = {}) {
   return request(`/print-jobs/pull?limit=${limit}`, { token })
 }
 
-function ack(token, jobId, { status, error } = {}) {
-  return request(`/print-jobs/${jobId}/ack`, { method: 'POST', token, body: { status, error } })
+function ack(token, jobId, { status, error, attempt_id, before_send } = {}) {
+  return request(`/print-jobs/${jobId}/ack`, { method: 'POST', token, body: { status, error, attempt_id, before_send } })
 }
 
 // 401/403 nesta API significa station token revogado/deletado no backend —

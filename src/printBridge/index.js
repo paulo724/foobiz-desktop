@@ -14,6 +14,8 @@ const HEALTH_INTERVAL_MS = 20000
 const active = new Map() // deviceId -> { ws, pollTimer, status }
 
 function setApiConfig({ apiBaseUrl, tenantCode }) {
+  const changed = store.getApiBaseUrl() && (store.getApiBaseUrl() !== apiBaseUrl || store.getTenantCode() !== tenantCode)
+  if (changed && store.getDevices().length) throw new Error('Remova os vínculos de impressão antes de trocar de estabelecimento ou servidor.')
   store.setApiBaseUrl(apiBaseUrl)
   store.setTenantCode(tenantCode)
 }
@@ -28,8 +30,10 @@ async function pairDevice({
   serialPort,
   serialBaudRate,
   serialRtscts,
+  managed, stationName, name,
 }) {
   const device = {
+    managed: !!managed, stationName, name,
     deviceId,
     deviceToken,
     tenantId,
@@ -64,6 +68,8 @@ async function printNow({ deviceId, payloadBase64, printerIdentity, options }) {
   if (!payloadBase64) {
     return { success: false, error: 'payloadBase64 ausente.' }
   }
+
+  if (device.managed) return { success: false, error: 'Impressora gerenciada: envie o trabalho pela fila.' }
 
   return printOnWorker(deviceId, {
     connectionType: options?.connection_type || device.connectionType,
@@ -120,6 +126,8 @@ async function startDevice(device) {
       const count = await processPendingJobs(device.deviceId, device.deviceToken, {
         printerIdentityFallback: device.printerIdentity,
         printOnWorker,
+        checkHealthOnWorker,
+        isActive: () => active.get(device.deviceId) === state,
       })
       state.lastPullAt = Date.now()
       state.lastError = null
@@ -127,7 +135,7 @@ async function startDevice(device) {
     } catch (err) {
       state.lastError = String(err?.message || err)
       log.error(`printBridge: erro ao puxar jobs do device ${device.deviceId}`, err)
-      if (apiClient.isAuthError(err)) forgetOrphanDevice()
+      if (apiClient.isAuthError(err) || err?.status === 409) forgetOrphanDevice()
     } finally {
       pulling = false
     }
@@ -146,10 +154,11 @@ async function startDevice(device) {
         hostname: os.hostname(),
         platform: process.platform,
         printerOnline: state.online,
+        printerStatusReason: state.onlineReason,
       })
     } catch (err) {
       log.error(`printBridge: falha ao enviar heartbeat do device ${device.deviceId}`, err)
-      if (apiClient.isAuthError(err)) forgetOrphanDevice()
+      if (apiClient.isAuthError(err) || err?.status === 409) forgetOrphanDevice()
     }
   }
 
@@ -196,8 +205,10 @@ async function startDevice(device) {
         printerIdentity: device.printerIdentity,
       })
       state.online = !!result.online
+      state.onlineReason = result.online ? null : (result.error || null)
     } catch (err) {
       state.online = false
+      state.onlineReason = String(err?.message || err)
       log.error(`printBridge: falha ao checar saúde do device ${device.deviceId}`, err)
     } finally {
       state.lastHealthAt = Date.now()
@@ -229,9 +240,8 @@ function stopDevice(deviceId) {
 }
 
 async function init() {
-  for (const device of store.getDevices()) {
-    await startDevice(device)
-  }
+  store.pruneJournal()
+  await Promise.allSettled(store.getDevices().map((device) => startDevice(device)))
 }
 
 function status() {
@@ -239,6 +249,7 @@ function status() {
     const state = active.get(d.deviceId)
     return {
       deviceId: d.deviceId,
+      name: d.name, stationName: d.stationName, managed: d.managed,
       connectionType: d.connectionType,
       address: d.address,
       status: state?.status || 'stopped',
@@ -253,6 +264,9 @@ function status() {
 }
 
 module.exports = {
+  identity: store.identity,
+  hasDevices: () => store.getDevices().length > 0,
+  stopAll: () => { for (const id of [...active.keys()]) stopDevice(id) },
   setApiConfig,
   pairDevice,
   unpairDevice,

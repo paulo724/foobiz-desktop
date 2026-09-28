@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // --- Print Bridge (descoberta, pareamento e impressão direta local) ---
   printBridge: {
+    identity: () => ipcRenderer.invoke('printbridge:identity'),
+    background: (enabled) => ipcRenderer.invoke('printbridge:background', enabled),
     discover: () => ipcRenderer.invoke('printbridge:discover'),
     setApiConfig: (cfg) => ipcRenderer.invoke('printbridge:set-api-config', cfg),
     pairDevice: (device) => ipcRenderer.invoke('printbridge:pair', device),

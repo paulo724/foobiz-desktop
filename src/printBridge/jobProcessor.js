@@ -1,7 +1,8 @@
 const log = require('electron-log')
+const store = require('./store')
+const { createDurableProcessor } = require('./durableProcessor')
 const apiClient = require('./apiClient')
-const serialPrinter = require('./printers/serialPrinter')
-const tcpPrinter = require('./printers/tcpPrinter')
+const { resolvePrinter } = require('./resolvePrinter')
 
 // Resolve o driver de impressora (serial/network) a partir das opções de
 // conexão de um job ou de um device pareado. Roda dentro do worker de cada
@@ -11,28 +12,25 @@ const tcpPrinter = require('./printers/tcpPrinter')
 // koffi/winspool.drv direto no processo principal (ver ./printers/winspool.js)
 // — FFI nativo dentro de worker_thread já causou crash irrecuperável do
 // processo neste projeto.
-function resolvePrinter({ connectionType, address, serialPort, serialBaudRate, serialRtscts }) {
-  const type = connectionType || 'usb'
-
-  if (type === 'network') {
-    return tcpPrinter.build(address, {})
-  }
-
-  if (type === 'serial') {
-    return serialPrinter.build(serialPort, { baudRate: serialBaudRate, rtscts: serialRtscts })
-  }
-
-  throw new Error(`resolvePrinter: connectionType '${type}' não deveria chegar ao worker (USB é resolvido no main process).`)
-}
 
 // deviceId é passado pelo chamador (startDevice conhece o device do pull em
 // andamento) — usado para enfileirar no mesmo worker por impressora que a
 // impressão local (printNow) usa, para as duas vias nunca escreverem na
 // mesma porta ao mesmo tempo.
-async function processPendingJobs(deviceId, deviceToken, { printerIdentityFallback, printOnWorker } = {}) {
+async function processPendingJobs(deviceId, deviceToken, { printerIdentityFallback, printOnWorker, checkHealthOnWorker, isActive } = {}) {
+  const durable = createDurableProcessor({ api: apiClient, journal: { get: store.journalGet, set: store.journalSet, pending: store.pendingJournal }, print: printOnWorker, health: checkHealthOnWorker, isActive })
+  await durable.reconcile(deviceId, deviceToken)
   const { jobs } = await apiClient.pull(deviceToken, { limit: 5 })
 
   for (const job of jobs) {
+    if (job.managed) {
+      await durable.execute(deviceId, deviceToken, job, {
+        connectionType: job.options?.connection_type, address: job.options?.address,
+        serialPort: job.options?.serialPort, serialBaudRate: job.options?.serialBaudRate,
+        serialRtscts: job.options?.serialRtscts, printerIdentity: job.printerIdentity || printerIdentityFallback,
+      })
+      continue
+    }
     if (job.mode !== 'rawBase64' || !job.rawBase64) {
       log.error(`printBridge: job ${job.id} sem rawBase64 (mode=${job.mode})`)
       await apiClient.ack(deviceToken, job.id, { status: 'failed', error: `sem rawBase64 (mode=${job.mode})` }).catch(() => {})

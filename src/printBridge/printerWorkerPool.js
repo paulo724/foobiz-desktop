@@ -5,6 +5,11 @@ const winspool = require('./printers/winspool')
 
 const PRINT_TIMEOUT_MS = 8000
 const HEALTH_TIMEOUT_MS = 4000
+// Acompanhamento de trabalhos no spooler do Windows (jobs gerenciados).
+const SPOOLER_DRAIN_MS = 10000
+const SPOOLER_TRACK_MS = 20000
+const SPOOLER_POLL_MS = 500
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const WORKER_PATH = path.join(__dirname, 'printerWorker.js')
 
 const workers = new Map() // deviceId -> { worker, pending: Map<id, {resolve}> }
@@ -67,14 +72,14 @@ function getOrCreateWorker(deviceId) {
   worker.on('error', (err) => {
     log.error(`printBridge: worker do device ${deviceId} caiu`, err)
     failAllPending(entry, String(err?.message || err))
-    workers.delete(deviceId)
+    if (workers.get(deviceId) === entry) workers.delete(deviceId)
   })
 
   worker.on('exit', (code) => {
     if (code !== 0) {
       failAllPending(entry, `Worker de impressão encerrou inesperadamente (code=${code}).`)
     }
-    workers.delete(deviceId)
+    if (workers.get(deviceId) === entry) workers.delete(deviceId)
   })
 
   return entry
@@ -89,14 +94,38 @@ function failAllPending(entry, error) {
 }
 
 
+// Diagnóstico: com FOOBIZ_PRINT_DUMP=1 grava cada payload recebido (ESC/POS
+// já decodificado) em <userData>/print-dumps/ para inspeção byte a byte.
+function dumpPayload(deviceId, payloadBase64) {
+  if (!process.env.FOOBIZ_PRINT_DUMP) return
+  try {
+    const fs = require('fs')
+    const { app } = require('electron')
+    const dir = path.join(app.getPath('userData'), 'print-dumps')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, `${Date.now()}-${deviceId}.bin`)
+    fs.writeFileSync(file, Buffer.from(payloadBase64, 'base64'))
+    log.info(`printBridge: payload salvo em ${file}`)
+  } catch (err) {
+    log.warn('printBridge: falha ao salvar dump do payload', err)
+  }
+}
+
 function printOnWorker(deviceId, printerConfig, payloadBase64) {
+  dumpPayload(deviceId, payloadBase64)
   if ((printerConfig?.connectionType || 'usb') === 'usb') {
     return enqueueUsb(deviceId, async () => {
+      const name = printerConfig.printerIdentity || printerConfig.printerIdentityFallback
       try {
-        winspool.printRaw(printerConfig.printerIdentity || printerConfig.printerIdentityFallback, Buffer.from(payloadBase64, 'base64'))
-        return { success: true }
+        if (printerConfig.trackSpooler) {
+          const ready = await waitSpoolerIdle(name)
+          if (!ready.online) return { success: false, notSubmitted: true, error: ready.reason }
+        }
+        const jobId = winspool.printRaw(name, Buffer.from(payloadBase64, 'base64'))
+        if (!printerConfig.trackSpooler) return { success: true }
+        return await trackSpoolerJob(name, jobId)
       } catch (err) {
-        return { success: false, error: String(err?.message || err) }
+        return { success: false, notSubmitted: !!err?.notSubmitted, error: String(err?.message || err) }
       }
     })
   }
@@ -113,7 +142,7 @@ function printOnWorker(deviceId, printerConfig, payloadBase64) {
       })
 
       entry.worker.terminate().catch(() => {})
-      workers.delete(deviceId)
+      if (workers.get(deviceId) === entry) workers.delete(deviceId)
     }, PRINT_TIMEOUT_MS)
 
     entry.pending.set(id, {
@@ -125,6 +154,37 @@ function printOnWorker(deviceId, printerConfig, payloadBase64) {
     })
     entry.worker.postMessage({ type: 'print', id, printerConfig, payloadBase64 })
   })
+}
+
+// Não empilha trabalhos no spooler: com a impressora em erro ou com trabalhos
+// parados, o Windows aceitaria o envio e imprimiria tudo depois, fora de hora.
+async function waitSpoolerIdle(name) {
+  const deadline = Date.now() + SPOOLER_DRAIN_MS
+  for (;;) {
+    const status = winspool.getStatus(name)
+    if (!status.online) return status
+    if (!status.jobs) return status
+    if (Date.now() >= deadline) {
+      return { online: false, reason: `${status.jobs} trabalho(s) parado(s) na fila do Windows` }
+    }
+    await sleep(SPOOLER_POLL_MS)
+  }
+}
+
+// O WritePrinter só confirma a entrega ao spooler; acompanha o trabalho até
+// ele sair da fila. Erro ou demora viram resultado incerto (success=false
+// depois do envio), nunca confirmação.
+async function trackSpoolerJob(name, jobId) {
+  const deadline = Date.now() + SPOOLER_TRACK_MS
+  for (;;) {
+    const job = winspool.getJob(name, jobId)
+    if (job.state === 'done') return { success: true }
+    if (job.state === 'error') return { success: false, error: job.reason }
+    if (Date.now() >= deadline) {
+      return { success: false, error: `Trabalho ainda na fila do Windows após ${SPOOLER_TRACK_MS / 1000}s` }
+    }
+    await sleep(SPOOLER_POLL_MS)
+  }
 }
 
 // Derruba o worker após um erro de porta "travada" (EPERM/ENOENT/EBUSY/
@@ -145,8 +205,9 @@ function checkHealthOnWorker(deviceId, printerConfig) {
   if ((printerConfig?.connectionType || 'usb') === 'usb') {
     return enqueueUsb(deviceId, async () => {
       try {
-        const online = winspool.checkHealth(printerConfig.printerIdentity || printerConfig.printerIdentityFallback)
-        return { success: true, online }
+        const name = printerConfig.printerIdentity || printerConfig.printerIdentityFallback
+        const status = printerConfig.trackSpooler ? await waitSpoolerIdle(name) : winspool.getStatus(name)
+        return { success: true, online: status.online, error: status.reason }
       } catch (err) {
         return { success: true, online: false, error: String(err?.message || err) }
       }
@@ -159,6 +220,7 @@ function checkHealthOnWorker(deviceId, printerConfig) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       entry.pending.delete(id)
+      recycleWorker(deviceId, entry)
       resolve({ success: true, online: false })
     }, HEALTH_TIMEOUT_MS)
 
@@ -174,6 +236,9 @@ function checkHealthOnWorker(deviceId, printerConfig) {
 }
 
 function stopWorker(deviceId) {
+  const queue = deviceQueues.get(deviceId)
+  if (queue) queue.stopped = true
+  deviceQueues.delete(deviceId)
   usbQueues.delete(deviceId)
 
   const entry = workers.get(deviceId)
@@ -183,4 +248,19 @@ function stopWorker(deviceId) {
   workers.delete(deviceId)
 }
 
-module.exports = { printOnWorker, checkHealthOnWorker, stopWorker }
+// Serializa também o despacho, para o timeout começar quando o trabalho
+// efetivamente chega ao worker, e não enquanto aguarda outro trabalho.
+const deviceQueues = new Map()
+function dispatch(deviceId, task) {
+  let queue = deviceQueues.get(deviceId)
+  if (!queue) { queue = { tail: Promise.resolve(), stopped: false }; deviceQueues.set(deviceId, queue) }
+  const run = () => queue.stopped ? { success: false, online: false, error: 'Executor interrompido.' } : task()
+  const result = queue.tail.then(run, run)
+  queue.tail = result.catch(() => {})
+  return result
+}
+module.exports = {
+  printOnWorker: (id, config, payload) => dispatch(id, () => printOnWorker(id, config, payload)),
+  checkHealthOnWorker: (id, config) => dispatch(id, () => checkHealthOnWorker(id, config)),
+  stopWorker,
+}
