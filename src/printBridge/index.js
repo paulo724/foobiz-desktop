@@ -189,6 +189,11 @@ async function startDevice(device) {
     }
   }
 
+  if (active.get(device.deviceId) !== state) {
+    state.ws?.disconnect()
+    return
+  }
+
   // Testa a porta/impressora de verdade (abre a porta COM, ou pergunta ao
   // spooler/socket se a impressora responde) — sem isso, "status" só reflete
   // a conexão WS do app com o backend, então a UI mostrava "Online" mesmo
@@ -223,6 +228,10 @@ async function startDevice(device) {
 
   state.healthTimer = setInterval(runHealthCheck, HEALTH_INTERVAL_MS)
   await runHealthCheck()
+
+  // O device pode ter sido removido durante o await (ex.: pull com token
+  // revogado); criar o timer agora deixaria um heartbeat órfão para sempre.
+  if (active.get(device.deviceId) !== state) return
 
   state.heartbeatTimer = setInterval(runHeartbeat, HEARTBEAT_INTERVAL_MS)
   runHeartbeat()
