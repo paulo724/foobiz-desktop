@@ -5,6 +5,9 @@ const apiClient = require('./apiClient')
 const wsClient = require('./wsClient')
 const discovery = require('./discovery')
 const { processPendingJobs } = require('./jobProcessor')
+const { executeManagedPrint } = require('./directManagedPrint')
+const { createDeviceExecution } = require('./deviceExecution')
+const executeDevice = createDeviceExecution()
 const { printOnWorker, checkHealthOnWorker, stopWorker } = require('./printerWorkerPool')
 
 const POLL_INTERVAL_MS = 7000
@@ -60,7 +63,7 @@ async function pairDevice({
 // no backend no momento da impressão (fonte de verdade), enquanto o store
 // local é só o que foi digitado/selecionado uma vez durante o pareamento e
 // pode ter ficado divergente (ex: impressora renomeada no spooler do SO).
-async function printNow({ deviceId, payloadBase64, printerIdentity, options }) {
+async function printNow({ deviceId, payloadBase64, printerIdentity, options, jobId, attemptId }) {
   const device = store.getDevices().find((d) => d.deviceId === deviceId)
   if (!device) {
     return { success: false, error: `Dispositivo ${deviceId} não está pareado.` }
@@ -69,16 +72,24 @@ async function printNow({ deviceId, payloadBase64, printerIdentity, options }) {
     return { success: false, error: 'payloadBase64 ausente.' }
   }
 
-  if (device.managed) return { success: false, error: 'Impressora gerenciada: envie o trabalho pela fila.' }
-
-  return printOnWorker(deviceId, {
+  const config = {
     connectionType: options?.connection_type || device.connectionType,
     address: options?.address || device.address,
     serialPort: options?.serialPort || device.serialPort,
     serialBaudRate: options?.serialBaudRate || device.serialBaudRate,
     serialRtscts: options?.serialRtscts ?? device.serialRtscts,
     printerIdentity: printerIdentity || device.printerIdentity,
-  }, payloadBase64)
+  }
+  if (device.managed || jobId || attemptId) {
+    const state = active.get(deviceId)
+    return executeDevice(deviceId, () => executeManagedPrint({
+      device, jobId, attemptId, payloadBase64, config, api: apiClient,
+      journal: { get: store.journalGet, set: store.journalSet, pending: store.pendingJournal },
+      print: printOnWorker, health: checkHealthOnWorker,
+      isActive: () => !!state && active.get(deviceId) === state,
+    }))
+  }
+  return printOnWorker(deviceId, config, payloadBase64)
 }
 
 async function unpairDevice(deviceId) {
@@ -123,12 +134,12 @@ async function startDevice(device) {
     if (pulling) return
     pulling = true
     try {
-      const count = await processPendingJobs(device.deviceId, device.deviceToken, {
+      const count = await executeDevice(device.deviceId, () => processPendingJobs(device.deviceId, device.deviceToken, {
         printerIdentityFallback: device.printerIdentity,
         printOnWorker,
         checkHealthOnWorker,
         isActive: () => active.get(device.deviceId) === state,
-      })
+      }))
       state.lastPullAt = Date.now()
       state.lastError = null
       if (count > 0) log.info(`printBridge: device ${device.deviceId} imprimiu ${count} job(s)`)

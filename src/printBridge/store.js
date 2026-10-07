@@ -49,7 +49,7 @@ function clearDevices() {
 function identity() {
   if (!store.get('executorId')) store.set('executorId', randomUUID())
   if (!store.get('executorSecret')) store.set('executorSecret', randomBytes(32).toString('hex'))
-  return { executor_id: store.get('executorId'), executor_secret: store.get('executorSecret'), name: os.hostname(), version: require('../../package.json').version }
+  return { managed_direct_print: true, executor_id: store.get('executorId'), executor_secret: store.get('executorSecret'), name: os.hostname(), version: require('../../package.json').version }
 }
 function scope() { return `${getApiBaseUrl()}|${getTenantCode()}` }
 function journalKey(attemptId) { return `${scope()}|${attemptId}` }
