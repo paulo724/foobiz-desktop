@@ -1,5 +1,20 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, shell, Tray, Menu, dialog } = require('electron')
 const path = require('path')
+
+// APP_TYPE: 'totem' | 'kds' | 'pdv'
+// Em dev, vem da env var setada pelo script npm (cross-env FOOBIZ_APP=...).
+// Em build empacotado, a env var não sobrevive ao processo do electron-builder,
+// então cada config grava foobiz.appType no package.json via extraMetadata.
+const APP_TYPE = process.env.FOOBIZ_APP || require('../package.json').foobiz?.appType || 'pdv'
+
+// Em dev, os três apps compartilham o package.json (name: foobiz-desktop) e,
+// portanto, a mesma pasta userData — e com ela o single instance lock e os
+// electron-store. Separa por app antes de qualquer require que toque o userData
+// (ex.: printBridge/store.js cria um Store no carregamento).
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('appData'), `foobiz-desktop-${APP_TYPE}`))
+}
+
 const log = require('electron-log')
 const Store = require('electron-store')
 const { setupUpdater } = require('./updater')
@@ -52,11 +67,6 @@ process.on('unhandledRejection', (reason) => {
   }
 })
 
-// APP_TYPE: 'totem' | 'kds' | 'pdv'
-// Em dev, vem da env var setada pelo script npm (cross-env FOOBIZ_APP=...).
-// Em build empacotado, a env var não sobrevive ao processo do electron-builder,
-// então cada config grava foobiz.appType no package.json via extraMetadata.
-const APP_TYPE = process.env.FOOBIZ_APP || require('../package.json').foobiz?.appType || 'pdv'
 log.info('desktop: APP_TYPE resolvido', { APP_TYPE })
 
 // devPort: porta do dev server Vite de cada app separado (ver
