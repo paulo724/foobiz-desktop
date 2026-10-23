@@ -24,6 +24,7 @@ const directPin = require('./directPin/service')
 const { SERIAL_CLIENT_VERSION } = require('./directPin/serialClient')
 const plugPag = require('./plugPag/service')
 const { startStaticServer } = require('./staticServer')
+const { isPowerControlSupported, buildPowerCommand, runPowerCommand } = require('./systemPower')
 
 const appSettingsStore = new Store({ name: 'app-settings' })
 
@@ -471,6 +472,43 @@ function setupAppWindowHandlers(ipcMain) {
 
     return getDisplayMode(win)
   })
+
+  ipcMain.handle('app:get-power-control', () => getPowerControl())
+
+  ipcMain.handle('app:set-power-control-enabled', (_, enabled) => {
+    appSettingsStore.set(`powerControl.${APP_TYPE}`, Boolean(enabled))
+    return getPowerControl()
+  })
+
+  ipcMain.handle('app:system-power', async (_, action) => {
+    if (!getPowerControl().enabled) {
+      return { ok: false, error: 'Desligar/reiniciar pelo app está desativado neste terminal.' }
+    }
+
+    const command = buildPowerCommand(action)
+    if (!command) return { ok: false, error: 'Ação de energia inválida.' }
+
+    log.info('desktop: comando de energia solicitado pelo app', { action, APP_TYPE })
+    printBridge.stopAll()
+
+    try {
+      await runPowerCommand(command)
+      return { ok: true }
+    } catch (err) {
+      log.error('desktop: falha ao executar comando de energia', { action, message: err?.message })
+      return { ok: false, error: 'Não foi possível executar o comando no Windows.' }
+    }
+  })
+}
+
+// Botão de desligar/reiniciar o computador: ligado por padrão só no KDS (tela touch).
+function getPowerControl() {
+  const supported = isPowerControlSupported()
+
+  return {
+    supported,
+    enabled: supported && appSettingsStore.get(`powerControl.${APP_TYPE}`, APP_TYPE === 'kds'),
+  }
 }
 
 app.on('window-all-closed', () => {

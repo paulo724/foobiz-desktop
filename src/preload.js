@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setFullscreenMode: (enabled) => ipcRenderer.invoke('app:set-fullscreen-mode', enabled),
     getOpenAtLogin: () => ipcRenderer.invoke('app:get-open-at-login'),
     setOpenAtLogin: (enabled) => ipcRenderer.invoke('app:set-open-at-login', enabled),
+    getPowerControl: () => ipcRenderer.invoke('app:get-power-control'),
+    setPowerControlEnabled: (enabled) => ipcRenderer.invoke('app:set-power-control-enabled', enabled),
+    // action: 'shutdown' | 'restart'
+    systemPower: (action) => ipcRenderer.invoke('app:system-power', action),
   },
 
   // --- Updates ---
