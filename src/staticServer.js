@@ -17,6 +17,8 @@ const MIME_TYPES = {
   '.woff2': 'font/woff2',
   '.webmanifest': 'application/manifest+json',
   '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
 }
 
 // Porta fixa para que a origem https://127.0.0.1:PORT seja previsível e possa
