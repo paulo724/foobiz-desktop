@@ -1,6 +1,7 @@
 const os = require('os')
 const log = require('electron-log')
 const store = require('./store')
+const { normalizeApiBaseUrl, sameApiConfig } = require('./apiConfig')
 const apiClient = require('./apiClient')
 const wsClient = require('./wsClient')
 const discovery = require('./discovery')
@@ -17,10 +18,12 @@ const HEALTH_INTERVAL_MS = 20000
 const active = new Map() // deviceId -> { ws, pollTimer, status }
 
 function setApiConfig({ apiBaseUrl, tenantCode }) {
-  const changed = store.getApiBaseUrl() && (store.getApiBaseUrl() !== apiBaseUrl || store.getTenantCode() !== tenantCode)
+  const current = { apiBaseUrl: store.getApiBaseUrl(), tenantCode: store.getTenantCode() }
+  const next = { apiBaseUrl: normalizeApiBaseUrl(apiBaseUrl), tenantCode: String(tenantCode || '').trim() }
+  const changed = current.apiBaseUrl && !sameApiConfig(current, next)
   if (changed && store.getDevices().length) throw new Error('Remova os vínculos de impressão antes de trocar de estabelecimento ou servidor.')
-  store.setApiBaseUrl(apiBaseUrl)
-  store.setTenantCode(tenantCode)
+  store.setApiBaseUrl(next.apiBaseUrl)
+  store.setTenantCode(next.tenantCode)
 }
 
 async function pairDevice({
